@@ -71,7 +71,7 @@ class BatteryDataPreprocessor:
 
 # 메인 실행
 if __name__ == "__main__":
-    BASE_DIR = r"C:\Users\dong9\OneDrive\바탕 화면\함동호\대외활동\데부캠\04_최종_PJT\02_dataset"
+    BASE_DIR = r"dataset"
     
     preprocessor = BatteryDataPreprocessor(lowess_frac=0.05)
     
