@@ -3,218 +3,120 @@ import os
 import random
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
-from PIL import Image
 import numpy as np
-import collections
-import numbers
-import math
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 import pickle
 
 
-class PSMSegLoader(object):
-    def __init__(self, data_path, win_size, step, mode="train"):
-        self.mode = mode
+class NASABatteryLoader(object):
+    """
+    NASA Battery Dataset Loader for Anomaly Transformer
+    
+    Args:
+        data_path: path to NASA battery discharge data file
+        win_size: window size (default: 25)
+        step: stride for sliding window (default: 1)
+        drop_columns: columns to drop from data
+    """
+    
+    def __init__(self, data_path, win_size=25, step=1,
+                 drop_columns=['type', 'start_time_raw', 'Time', 'ambient_temperature', 'cycle_idx']):
         self.step = step
         self.win_size = win_size
         self.scaler = StandardScaler()
-        data = pd.read_csv(data_path + '/train.csv')
-        data = data.values[:, 1:]
-
+        
+        # Load discharge data
+        if data_path.endswith('.csv'):
+            data = pd.read_csv(data_path)
+            
+            # Filter only discharge data
+            if 'type' in data.columns:
+                print(f"Original data shape: {data.shape}")
+                data = data[data['type'] == 'discharge'].copy()
+                print(f"After filtering discharge: {data.shape}")
+            
+            # Drop specified columns
+            columns_to_drop = [col for col in drop_columns if col in data.columns]
+            if columns_to_drop:
+                print(f"Dropping columns: {columns_to_drop}")
+                data = data.drop(columns=columns_to_drop)
+            
+            data = data.values
+            
+        elif data_path.endswith('.npy'):
+            data = np.load(data_path)
+        else:
+            raise ValueError("Data file must be .csv or .npy format")
+        
+        # Handle NaN values
         data = np.nan_to_num(data)
-
+        
+        print(f"Final data shape: {data.shape}")
+        print(f"Features: {data.shape[1]}")
+        
+        # Fit scaler and transform
         self.scaler.fit(data)
-        data = self.scaler.transform(data)
-        test_data = pd.read_csv(data_path + '/test.csv')
-
-        test_data = test_data.values[:, 1:]
-        test_data = np.nan_to_num(test_data)
-
-        self.test = self.scaler.transform(test_data)
-
-        self.train = data
-        self.val = self.test
-
-        self.test_labels = pd.read_csv(data_path + '/test_label.csv').values[:, 1:]
-
-        print("test:", self.test.shape)
-        print("train:", self.train.shape)
-
+        data_normalized = self.scaler.transform(data)
+        
+        # Use all data for training
+        self.train = data_normalized
+        self.all_data = data_normalized
+        self.train_labels = np.zeros(len(self.train))
+        
+        print(f"\n--- Data Info ---")
+        print(f"Total timesteps: {len(data_normalized)}")
+        print(f"✅ Using ALL data for training")
+        
+        # Check if cycle 598 exists
+        if len(data_normalized) > 598:
+            print(f"✅ Timestep 598 exists in dataset")
+        else:
+            print(f"⚠️  Dataset has only {len(data_normalized)} timesteps (< 598)")
+    
     def __len__(self):
-        """
-        Number of images in the object dataset.
-        """
-        if self.mode == "train":
-            return (self.train.shape[0] - self.win_size) // self.step + 1
-        elif (self.mode == 'val'):
-            return (self.val.shape[0] - self.win_size) // self.step + 1
-        elif (self.mode == 'test'):
-            return (self.test.shape[0] - self.win_size) // self.step + 1
-        else:
-            return (self.test.shape[0] - self.win_size) // self.win_size + 1
-
+        """Number of windows in the dataset"""
+        return (self.train.shape[0] - self.win_size) // self.step + 1
+    
     def __getitem__(self, index):
-        index = index * self.step
-        if self.mode == "train":
-            return np.float32(self.train[index:index + self.win_size]), np.float32(self.test_labels[0:self.win_size])
-        elif (self.mode == 'val'):
-            return np.float32(self.val[index:index + self.win_size]), np.float32(self.test_labels[0:self.win_size])
-        elif (self.mode == 'test'):
-            return np.float32(self.test[index:index + self.win_size]), np.float32(
-                self.test_labels[index:index + self.win_size])
-        else:
-            return np.float32(self.test[
-                              index // self.step * self.win_size:index // self.step * self.win_size + self.win_size]), np.float32(
-                self.test_labels[index // self.step * self.win_size:index // self.step * self.win_size + self.win_size])
+        """Get a single window of data"""
+        start_idx = index * self.step
+        window_data = self.train[start_idx:start_idx + self.win_size]
+        window_label = self.train_labels[start_idx:start_idx + self.win_size]
+        return np.float32(window_data), np.float32(window_label)
+    
+    def get_all_data(self):
+        """Get all normalized data for full prediction"""
+        return self.all_data
 
 
-class MSLSegLoader(object):
-    def __init__(self, data_path, win_size, step, mode="train"):
-        self.mode = mode
-        self.step = step
-        self.win_size = win_size
-        self.scaler = StandardScaler()
-        data = np.load(data_path + "/MSL_train.npy")
-        self.scaler.fit(data)
-        data = self.scaler.transform(data)
-        test_data = np.load(data_path + "/MSL_test.npy")
-        self.test = self.scaler.transform(test_data)
-
-        self.train = data
-        self.val = self.test
-        self.test_labels = np.load(data_path + "/MSL_test_label.npy")
-        print("test:", self.test.shape)
-        print("train:", self.train.shape)
-
-    def __len__(self):
-
-        if self.mode == "train":
-            return (self.train.shape[0] - self.win_size) // self.step + 1
-        elif (self.mode == 'val'):
-            return (self.val.shape[0] - self.win_size) // self.step + 1
-        elif (self.mode == 'test'):
-            return (self.test.shape[0] - self.win_size) // self.step + 1
-        else:
-            return (self.test.shape[0] - self.win_size) // self.win_size + 1
-
-    def __getitem__(self, index):
-        index = index * self.step
-        if self.mode == "train":
-            return np.float32(self.train[index:index + self.win_size]), np.float32(self.test_labels[0:self.win_size])
-        elif (self.mode == 'val'):
-            return np.float32(self.val[index:index + self.win_size]), np.float32(self.test_labels[0:self.win_size])
-        elif (self.mode == 'test'):
-            return np.float32(self.test[index:index + self.win_size]), np.float32(
-                self.test_labels[index:index + self.win_size])
-        else:
-            return np.float32(self.test[
-                              index // self.step * self.win_size:index // self.step * self.win_size + self.win_size]), np.float32(
-                self.test_labels[index // self.step * self.win_size:index // self.step * self.win_size + self.win_size])
-
-
-class SMAPSegLoader(object):
-    def __init__(self, data_path, win_size, step, mode="train"):
-        self.mode = mode
-        self.step = step
-        self.win_size = win_size
-        self.scaler = StandardScaler()
-        data = np.load(data_path + "/SMAP_train.npy")
-        self.scaler.fit(data)
-        data = self.scaler.transform(data)
-        test_data = np.load(data_path + "/SMAP_test.npy")
-        self.test = self.scaler.transform(test_data)
-
-        self.train = data
-        self.val = self.test
-        self.test_labels = np.load(data_path + "/SMAP_test_label.npy")
-        print("test:", self.test.shape)
-        print("train:", self.train.shape)
-
-    def __len__(self):
-
-        if self.mode == "train":
-            return (self.train.shape[0] - self.win_size) // self.step + 1
-        elif (self.mode == 'val'):
-            return (self.val.shape[0] - self.win_size) // self.step + 1
-        elif (self.mode == 'test'):
-            return (self.test.shape[0] - self.win_size) // self.step + 1
-        else:
-            return (self.test.shape[0] - self.win_size) // self.win_size + 1
-
-    def __getitem__(self, index):
-        index = index * self.step
-        if self.mode == "train":
-            return np.float32(self.train[index:index + self.win_size]), np.float32(self.test_labels[0:self.win_size])
-        elif (self.mode == 'val'):
-            return np.float32(self.val[index:index + self.win_size]), np.float32(self.test_labels[0:self.win_size])
-        elif (self.mode == 'test'):
-            return np.float32(self.test[index:index + self.win_size]), np.float32(
-                self.test_labels[index:index + self.win_size])
-        else:
-            return np.float32(self.test[
-                              index // self.step * self.win_size:index // self.step * self.win_size + self.win_size]), np.float32(
-                self.test_labels[index // self.step * self.win_size:index // self.step * self.win_size + self.win_size])
-
-
-class SMDSegLoader(object):
-    def __init__(self, data_path, win_size, step, mode="train"):
-        self.mode = mode
-        self.step = step
-        self.win_size = win_size
-        self.scaler = StandardScaler()
-        data = np.load(data_path + "/SMD_train.npy")
-        self.scaler.fit(data)
-        data = self.scaler.transform(data)
-        test_data = np.load(data_path + "/SMD_test.npy")
-        self.test = self.scaler.transform(test_data)
-        self.train = data
-        data_len = len(self.train)
-        self.val = self.train[(int)(data_len * 0.8):]
-        self.test_labels = np.load(data_path + "/SMD_test_label.npy")
-
-    def __len__(self):
-
-        if self.mode == "train":
-            return (self.train.shape[0] - self.win_size) // self.step + 1
-        elif (self.mode == 'val'):
-            return (self.val.shape[0] - self.win_size) // self.step + 1
-        elif (self.mode == 'test'):
-            return (self.test.shape[0] - self.win_size) // self.step + 1
-        else:
-            return (self.test.shape[0] - self.win_size) // self.win_size + 1
-
-    def __getitem__(self, index):
-        index = index * self.step
-        if self.mode == "train":
-            return np.float32(self.train[index:index + self.win_size]), np.float32(self.test_labels[0:self.win_size])
-        elif (self.mode == 'val'):
-            return np.float32(self.val[index:index + self.win_size]), np.float32(self.test_labels[0:self.win_size])
-        elif (self.mode == 'test'):
-            return np.float32(self.test[index:index + self.win_size]), np.float32(
-                self.test_labels[index:index + self.win_size])
-        else:
-            return np.float32(self.test[
-                              index // self.step * self.win_size:index // self.step * self.win_size + self.win_size]), np.float32(
-                self.test_labels[index // self.step * self.win_size:index // self.step * self.win_size + self.win_size])
-
-
-def get_loader_segment(data_path, batch_size, win_size=100, step=100, mode='train', dataset='KDD'):
-    if (dataset == 'SMD'):
-        dataset = SMDSegLoader(data_path, win_size, step, mode)
-    elif (dataset == 'MSL'):
-        dataset = MSLSegLoader(data_path, win_size, 1, mode)
-    elif (dataset == 'SMAP'):
-        dataset = SMAPSegLoader(data_path, win_size, 1, mode)
-    elif (dataset == 'PSM'):
-        dataset = PSMSegLoader(data_path, win_size, 1, mode)
-
-    shuffle = False
-    if mode == 'train':
-        shuffle = True
-
-    data_loader = DataLoader(dataset=dataset,
-                             batch_size=batch_size,
-                             shuffle=shuffle,
-                             num_workers=0)
-    return data_loader
+def get_nasa_loader(data_path, batch_size=32, win_size=25, step=1,
+                    drop_columns=['type', 'start_time_raw', 'Time', 'ambient_temperature', 'cycle_idx']):
+    """
+    Get DataLoader for NASA Battery discharge data
+    
+    Args:
+        data_path: path to NASA battery data file
+        batch_size: batch size for DataLoader
+        win_size: window size (default: 25)
+        step: stride for sliding window (default: 1)
+        drop_columns: columns to drop from data
+    
+    Returns:
+        (DataLoader, Dataset) tuple
+    """
+    dataset = NASABatteryLoader(
+        data_path=data_path,
+        win_size=win_size,
+        step=step,
+        drop_columns=drop_columns
+    )
+    
+    data_loader = DataLoader(
+        dataset=dataset,
+        batch_size=batch_size,
+        shuffle=True,  # 항상 shuffle
+        num_workers=0
+    )
+    
+    return data_loader, dataset
