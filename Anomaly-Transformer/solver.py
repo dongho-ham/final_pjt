@@ -70,7 +70,7 @@ class Solver(object):
 
     Args:
         config: configuration dictionary containing hyperparameters and settings
-        wind_size: size of the input window (25, 50, 100)
+        win_size: size of the input window (25, 50, 100)
         input_c: number of input channels (20, 38)
         output_c: number of output channels (20, 38)
     
@@ -87,18 +87,22 @@ class Solver(object):
 
         self.__dict__.update(Solver.DEFAULTS, **config)
 
-        self.train_loader = get_loader_segment(self.data_path, batch_size=self.batch_size, win_size=self.win_size,
-                                               mode='train',
-                                               dataset=self.dataset) # 훈련 데이터 로더
-        self.vali_loader = get_loader_segment(self.data_path, batch_size=self.batch_size, win_size=self.win_size,
-                                              mode='val',
-                                              dataset=self.dataset) # 검증 데이터 로더
-        self.test_loader = get_loader_segment(self.data_path, batch_size=self.batch_size, win_size=self.win_size,
-                                              mode='test',
-                                              dataset=self.dataset) # 테스트 데이터 로더
-        self.thre_loader = get_loader_segment(self.data_path, batch_size=self.batch_size, win_size=self.win_size,
-                                              mode='thre',
-                                              dataset=self.dataset) # 임계값 설정용 데이터 로더
+        self.train_loader = get_loader_segment(
+        self.data_path, batch_size=self.batch_size, win_size=self.win_size,
+        step=self.stride, mode='train', dataset=self.dataset
+    )
+        self.vali_loader = get_loader_segment(
+            self.data_path, batch_size=self.batch_size, win_size=self.win_size,
+            step=self.stride, mode='val', dataset=self.dataset
+        )
+        self.test_loader = get_loader_segment(
+            self.data_path, batch_size=self.batch_size, win_size=self.win_size,
+            step=self.stride, mode='test', dataset=self.dataset
+        )
+        self.thre_loader = get_loader_segment(
+            self.data_path, batch_size=self.batch_size, win_size=self.win_size,
+            step=self.stride, mode='thre', dataset=self.dataset
+        )
 
         self.build_model() # 모델 및 옵티마이저 구축
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") # cuda 설정
@@ -340,9 +344,11 @@ class Solver(object):
 
         attens_energy = np.concatenate(attens_energy, axis=0).reshape(-1)
         test_energy = np.array(attens_energy)
-        combined_energy = np.concatenate([train_energy, test_energy], axis=0)
-        thresh = np.percentile(combined_energy, 100 - self.anormly_ratio)
-        print("Threshold :", thresh)
+
+        # Train 데이터만으로 threshold 계산 (percentile 방식, outlier robust)
+        # 배터리 데이터는 열화가 후기에 나타나서 combined 방식이 데이터 누수를 일으킬 수 있음
+        thresh = np.percentile(train_energy, 100 - self.anormly_ratio)
+        print(f"\nThreshold ({100 - self.anormly_ratio}th percentile): {thresh:.6f}")
 
         # (3) evaluation on the test set
         test_labels = []
@@ -445,7 +451,7 @@ class Solver(object):
         try:
             if hasattr(self.thre_loader.dataset, 'cycle_idx') and self.thre_loader.dataset.cycle_idx is not None:
                 # Window별 평균 계산 (stride=1 고려)
-                stride = 1
+                stride = self.stride
                 win_size = self.win_size
                 n_windows = (len(self.thre_loader.dataset.cycle_idx) - win_size) // stride + 1
                 
