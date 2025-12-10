@@ -39,11 +39,12 @@ if __name__ == '__main__':
     parser.add_argument('--input_c', type=int, default=20)   # 38 → 20 (cycle_idx 제외)
     parser.add_argument('--output_c', type=int, default=20)  # 38 → 20
     parser.add_argument('--batch_size', type=int, default=128)  # 1024 → n
+    parser.add_argument('--stride', type=int, default=1)
     parser.add_argument('--pretrained_model', type=str, default=None)
     parser.add_argument('--dataset', type=str, default='nasa_battery')
     parser.add_argument('--mode', type=str, default='train', choices=['train', 'test'])
     parser.add_argument('--data_path', type=str, 
-                        default=r'B0005_discharge_with_lowess_features.csv')  # 경로 수정
+                        default=r'C:\Users\dong9\OneDrive\바탕 화면\함동호\대외활동\데부캠\04_최종_PJT\02_dataset\B0007_discharge_with_lowess_features.csv')  # 경로 수정
     parser.add_argument('--model_save_path', type=str, default='checkpoints')
     parser.add_argument('--anormly_ratio', type=float, default=1.00)
 
