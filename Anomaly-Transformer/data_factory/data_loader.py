@@ -8,77 +8,84 @@ class NASABatteryLoader(object):
     NASA Battery Dataset Loader for Anomaly Transformer
     """
     
-    def __init__(self, data_path, win_size=25, step=1):
+    def __init__(self, data_path, win_size=25, step=1, mode='train', train_ratio=0.8):
         self.step = step
         self.win_size = win_size
+        self.mode = mode
         
-        # Load preprocessed data
         if data_path.endswith('.csv'):
             df = pd.read_csv(data_path)
-            print(f"Loaded data shape: {df.shape}")
-            print(f"Columns: {list(df.columns)}")
             
-            # Separate cycle_idx for tracking
-            if 'cycle_idx' in df.columns:
-                self.cycle_idx = df['cycle_idx'].values
-                df = df.drop(columns=['cycle_idx'])
-            else:
-                self.cycle_idx = None
+            if 'cycle_idx' not in df.columns:
+                raise ValueError("cycle_idx column is required for temporal split")
             
-            # Convert to numpy
-            data = df.values
+            total_rows = len(df)
+            unique_cycles = sorted(df['cycle_idx'].unique())
+            total_cycles = len(unique_cycles)
             
-        elif data_path.endswith('.npy'):
-            data = np.load(data_path)
-            self.cycle_idx = None
+            n_train_cycles = int(total_cycles * train_ratio)
+            train_cycles = unique_cycles[:n_train_cycles]
+            test_cycles = unique_cycles[n_train_cycles:]
+            
+            if mode == 'train':
+                # Train set: first 80% cycles
+                df = df[df['cycle_idx'].isin(train_cycles)]
+                cycle_range = f"{train_cycles[0]} ~ {train_cycles[-1]}"
+                n_cycles = len(train_cycles)
+            elif mode in ['test', 'val', 'thre']:
+                # Test/Val/Thre set: last 20% cycles
+                df = df[df['cycle_idx'].isin(test_cycles)]
+                cycle_range = f"{test_cycles[0]} ~ {test_cycles[-1]}"
+                n_cycles = len(test_cycles)
+            
+            # Extract cycle_idx and drop from features
+            self.cycle_idx = df['cycle_idx'].values
+            df = df.drop(columns=['cycle_idx'])
+
+            drop_cols = ['type', 'ambient_temperature', 'start_time_raw', 'Time', 'Capacity']
+
+            # 존재하는 컬럼만 제거
+            cols_to_drop = [col for col in drop_cols if col in df.columns]
+            if cols_to_drop:
+                df = df.drop(columns=cols_to_drop)
+
+            data = df.values.astype(np.float32)
+            
+            # Print dataset info
+            split_ratio = len(data) / total_rows * 100
+            print(f"\n[{mode.upper()}]")
+            print(f"  Cycles: {cycle_range} ({n_cycles} / {total_cycles} cycles)")
+            print(f"  Rows: {len(data):,} / {total_rows:,} ({split_ratio:.1f}%)")
+            print(f"  Windows: {(len(data) - win_size) // step + 1:,}")
+            
         else:
-            raise ValueError("Data file must be .csv or .npy format")
+            raise ValueError("Data file must be .csv format")
         
-        # Handle NaN values
         if np.isnan(data).any():
-            print(f"Warning: {np.isnan(data).sum()} NaN values found, replacing with 0")
+            print(f"  Warning: {np.isnan(data).sum()} NaN values, replacing with 0")
             data = np.nan_to_num(data)
         
-        print(f"Final data shape: {data.shape}")
-        print(f"Features: {data.shape[1]}")
-        
-        # Use all data for training (unsupervised)
-        self.train = data
-        self.all_data = data
-        
-        # Label 생성: cycle 42와 596을 anomaly로 설정
-        if self.cycle_idx is not None:
-            self.labels = np.zeros(len(self.cycle_idx))
-            self.labels[(self.cycle_idx == 42) | (self.cycle_idx == 596)] = 1
-            
-            print(f"\n--- Anomaly Label Info ---")
-            print(f"Anomaly samples: {int(self.labels.sum())}")
-            print(f"Anomaly ratio: {self.labels.mean()*100:.2f}%")
-            print(f"Normal samples: {int((self.labels == 0).sum())}")
-        else:
-            self.labels = np.zeros(len(self.train))
-        
-        print(f"\n--- Data Info ---")
-        print(f"Total timesteps: {len(data)}")
-        print(f"Number of windows: {(len(data) - win_size) // self.step + 1}")
+        self.data = data
     
     def __len__(self):
-        """Number of windows in the dataset"""
-        return (self.train.shape[0] - self.win_size) // self.step + 1
+        return (len(self.data) - self.win_size) // self.step + 1
     
     def __getitem__(self, index):
-        """Get a single window of data"""
         start_idx = index * self.step
-        window_data = self.train[start_idx:start_idx + self.win_size]
-        window_label = self.labels[start_idx:start_idx + self.win_size]
+        end_idx = start_idx + self.win_size
+        
+        window_data = self.data[start_idx:end_idx]
+        window_label = np.zeros(self.win_size)
+        
         return np.float32(window_data), np.float32(window_label)
     
     def get_all_data(self):
         """Get all data for full prediction"""
-        return self.all_data
+        return self.data
 
 
-def get_nasa_loader(data_path, batch_size=32, win_size=25, step=1):
+def get_nasa_loader(data_path, batch_size, win_size, step=1, mode='train', 
+                       dataset='nasa_battery', train_ratio=0.8):
     """
     Get DataLoader for NASA Battery discharge data
     
@@ -87,6 +94,9 @@ def get_nasa_loader(data_path, batch_size=32, win_size=25, step=1):
         batch_size: batch size for DataLoader
         win_size: window size (default: 25)
         step: stride for sliding window (default: 1)
+        mode: 'train', 'test', 'val', or 'thre' (default: 'train')
+        dataset: dataset name (default: 'nasa_battery')
+        train_ratio: ratio of data used for training (default: 0.8)
     
     Returns:
         (DataLoader, Dataset) tuple
@@ -94,30 +104,34 @@ def get_nasa_loader(data_path, batch_size=32, win_size=25, step=1):
     dataset = NASABatteryLoader(
         data_path=data_path,
         win_size=win_size,
-        step=step
+        step=step,
+        mode=mode,
+        train_ratio=train_ratio
     )
     
     data_loader = DataLoader(
         dataset=dataset,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=False,  # 시계열 순서 유지
         num_workers=0
     )
     
     return data_loader, dataset
 
-def get_loader_segment(data_path, batch_size, win_size, mode='train', dataset='nasa_battery'):
+def get_loader_segment(data_path, batch_size, win_size, step=1, mode='train', 
+                       dataset='nasa_battery', train_ratio=0.8):
     """NASA Battery용 wrapper - solver.py와 호환"""
     if dataset == 'nasa_battery':
-        # mode에 관계없이 전체 데이터 반환 (unsupervised)
         dataset_obj = NASABatteryLoader(
             data_path=data_path,
             win_size=win_size,
-            step=1
+            step=step,
+            mode=mode,
+            train_ratio=train_ratio
         )
         
-        # test/thre mode에서는 shuffle=False (순서 유지)
-        shuffle = True if mode == 'train' else False
+        # Train만 shuffle, 나머지는 순서 유지
+        shuffle = (mode == 'train')
         
         data_loader = DataLoader(
             dataset=dataset_obj,
