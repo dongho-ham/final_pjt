@@ -35,7 +35,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--num_epochs', type=int, default=10)
     parser.add_argument('--k', type=int, default=3)
-    parser.add_argument('--win_size', type=int, default=25)  # 100 → 25
+    parser.add_argument('--win_size', type=int, default=100)  
     parser.add_argument('--input_c', type=int, default=20)   # 38 → 20 (cycle_idx 제외)
     parser.add_argument('--output_c', type=int, default=20)  # 38 → 20
     parser.add_argument('--batch_size', type=int, default=128)  # 1024 → n
